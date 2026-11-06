@@ -1,0 +1,158 @@
+name: Test and publish maintained latest
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: filecodebox-maintained-latest
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build_needed: ${{ steps.resolve.outputs.build_needed }}
+      base_image: ${{ steps.resolve.outputs.base_image }}
+      base_digest: ${{ steps.resolve.outputs.base_digest }}
+      upstream_revision: ${{ steps.resolve.outputs.upstream_revision }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate maintenance tooling and fail-closed source guard
+        run: python3 -m unittest discover -s tests -p '*_test.py' -v
+      - name: Resolve current upstream and published maintenance latest
+        id: resolve
+        env:
+          REVISION: ${{ github.sha }}
+          IMAGE_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/resolve_base.py
+          --revision "$REVISION"
+          --image-repository "$IMAGE_REPOSITORY"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Fetch exact labelled public source archives
+        if: steps.resolve.outputs.build_needed == 'true'
+        run: python3 scripts/prepare_sources.py
+      - name: Share one resolved base and its source archives
+        if: steps.resolve.outputs.build_needed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preparation
+          path: build/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+      - name: Explain unchanged upstream
+        if: steps.resolve.outputs.build_needed != 'true'
+        run: echo 'Published latest already matches upstream and maintenance source; no image rebuild or deployment.' >> "$GITHUB_STEP_SUMMARY"
+
+  test-platform:
+    needs: prepare
+    if: needs.prepare.outputs.build_needed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preparation
+          path: build/
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build exact upstream input; refuse changed upstream module
+        env:
+          ARCH: ${{ matrix.arch }}
+          BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+          BASE_DIGEST: ${{ needs.prepare.outputs.base_digest }}
+          UPSTREAM_REVISION: ${{ needs.prepare.outputs.upstream_revision }}
+          MAINTENANCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker buildx build --load --platform "linux/$ARCH" --provenance=false --sbom=false \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" --build-arg "BASE_DIGEST=$BASE_DIGEST" \
+            --build-arg "MAINTENANCE_REVISION=$MAINTENANCE_REVISION" \
+            --build-arg "UPSTREAM_REVISION=$UPSTREAM_REVISION" \
+            --tag "filecodebox-candidate:$ARCH" .
+      - name: Run all 15 existing limiter, bound and trusted-proxy regressions
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --tmpfs /app/data:rw,size=32m \
+            --tmpfs /tmp:rw,size=32m --memory 512m --cpus 1 \
+            -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/app \
+            --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
+            --mount "type=bind,src=$PWD/scripts/run_rate_tests.py,dst=/maintenance-tests.py,readonly" \
+            --mount "type=bind,src=$PWD/upstream-policy.json,dst=/maintenance-policy.json,readonly" \
+            --entrypoint python "filecodebox-candidate:$ARCH" \
+            /maintenance-tests.py --directory /tests --policy /maintenance-policy.json
+      - name: Fresh isolated HTTP boot check
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: python3 scripts/smoke_image.py "filecodebox-candidate:$ARCH"
+      - name: Export only this already-tested image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/export
+          docker save --output "build/export/filecodebox-$ARCH.tar" "filecodebox-candidate:$ARCH"
+          python3 scripts/record_candidate.py --arch "$ARCH" --directory build/export
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-${{ matrix.arch }}
+          path: build/export/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  publish:
+    needs: [prepare, test-platform]
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.build_needed == 'true' && needs.test-platform.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: preparation
+          path: build/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: candidate-*
+          path: build/candidates/
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Authenticate only the publication job
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish tested platforms, validate index, then promote latest
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/publish.py

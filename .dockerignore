@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!dependencies.py
+!upstream-policy.json
+!scripts/
+!scripts/check_upstream.py
+!LICENSE
+!NOTICE.txt
+!legal/
+!legal/**
+!build/
+!build/source/
+!build/source/**

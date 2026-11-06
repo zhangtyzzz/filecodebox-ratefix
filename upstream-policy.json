@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "upstream_repository": "vastsa/FileCodeBox",
+  "upstream_reference": "docker.io/lanol/filecodebox:latest",
+  "reviewed_source_revision": "8d3e4ad904c289c1852f08c3424ae370642c58c3",
+  "reviewed_initial_image": "lanol/filecodebox@sha256:f9186d44437004544f15bbaf784415895779a36ae3f5eb32d23886af8053bf7d",
+  "upstream_dependency_file": "/app/apps/base/dependencies.py",
+  "allowed_upstream_sha256": [
+    "93f28c7f77506b2fd25b15270a29d99f6ffe77aa1ee31d7a6c025634391ab8ce"
+  ],
+  "patched_file_sha256": "f8375ef743a18ffb917de3fdfeaf8dbab1a7d43abbf8fb7b27d8fb29126ec97c",
+  "expected_test_count": 15,
+  "on_module_change": "fail_before_overlay_or_publication; review upstream changes instead of adding a new hash blindly"
+}

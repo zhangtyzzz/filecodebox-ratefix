@@ -1,0 +1,17 @@
+FileCodeBox rate-limit maintenance image, based on the official lanol/filecodebox image.
+Upstream: https://github.com/vastsa/FileCodeBox
+Initial reviewed source: 8d3e4ad904c289c1852f08c3424ae370642c58c3 (2.8.5).
+Initial maintenance patch date: 2026-11-06.
+
+Modification: only apps/base/dependencies.py is replaced after an exact upstream
+module hash check. The replacement uses a bounded per-IP event sliding window
+instead of accumulating counters. Trusted-proxy parsing and the default 10,000
+tracked-IP capacity are preserved. This is not an upstream official release.
+
+Upstream copyright and LGPL-3.0 license remain in effect. The original LGPL-3.0
+text and its incorporated GPL-3.0 text are distributed with this project/image.
+The replacement source, policy, corresponding upstream source archives identified
+by the original image labels, and archive SHA256 values are available in
+/usr/share/doc/filecodebox-ratefix/ in the image.
+
+Do not substitute this maintenance notice for the upstream license or authorship.

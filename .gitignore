@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.test-deps/
+.test-state/
+build/
+*.tar
+*.tar.gz
+*.private*
+.env
